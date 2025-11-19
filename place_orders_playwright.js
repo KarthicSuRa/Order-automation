@@ -1,11 +1,10 @@
 /**
- * place_orders_playwright_debug.js
+ * place_orders_playwright_updated.js
  *
- * Debug version for SFCC guest checkout.
- * Visual, step-by-step verification of basket → checkout → payment → order.
- *
- * Usage:
- *   node place_orders_playwright_debug.js --count=1
+ * Updated for CI/QA environments:
+ * - Handles navigation timeout with retries
+ * - Uses 'domcontentloaded' for faster navigation
+ * - Headless mode for GitHub Actions
  */
 
 const { chromium } = require('playwright');
@@ -15,8 +14,8 @@ const CONFIG = {
   baseUrl: 'https://sg-devap02.mcmworldwide.com',
   productPath: '/en_SG/bags/all-bags/stark-backpack-in-maxi-monogram-leather/MMKDAVE02VC001.html',
   ordersToPlace: Number(argv.count || 1),
-  headless: true,  // Run in visible mode
-  slowMo: 500,      // Slow down actions for visual check
+  headless: true,          // Must be true for CI
+  slowMo: 100,             // Optional slow motion for debugging logs
   guest: {
     emailDomain: 'qa-example.com',
     firstName: 'Load',
@@ -68,28 +67,34 @@ function waitRandom(minMs, maxMs) {
 }
 
 async function fillAdyenIframe(page, iframeSelector, card) {
-  console.log('Filling payment iframe...');
   const iframeElement = await page.waitForSelector(iframeSelector, { timeout: 10000 });
   const frame = await iframeElement.contentFrame();
   if (!frame) throw new Error('Cannot access payment iframe');
 
-  console.log('Entering card number...');
   if (await frame.$(SELECTORS.payment.cardNumber))
     await frame.fill(SELECTORS.payment.cardNumber, card.number);
-
-  console.log('Entering expiry...');
   if (await frame.$(SELECTORS.payment.expiry))
     await frame.fill(SELECTORS.payment.expiry, `${card.expiryMonth}${card.expiryYear.slice(-2)}`);
-
-  console.log('Entering CVV...');
   if (await frame.$(SELECTORS.payment.cvc))
     await frame.fill(SELECTORS.payment.cvc, card.cvv);
-
-  console.log('Entering card holder name...');
   if (await frame.$(SELECTORS.payment.holderName))
     await frame.fill(SELECTORS.payment.holderName, card.holderName);
 
   return true;
+}
+
+async function navigateWithRetry(page, url, maxRetries = 2) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
+      return;
+    } catch (err) {
+      attempt++;
+      console.log(`Navigation failed (attempt ${attempt}) — retrying...`);
+      if (attempt >= maxRetries) throw err;
+    }
+  }
 }
 
 async function placeOneOrder(orderIndex, browser) {
@@ -97,18 +102,17 @@ async function placeOneOrder(orderIndex, browser) {
   page.setDefaultTimeout(60000);
 
   console.log(`Order[${orderIndex}] → Visiting product page...`);
-  await page.goto(CONFIG.baseUrl + CONFIG.productPath, { waitUntil: 'networkidle' });
+  await navigateWithRetry(page, CONFIG.baseUrl + CONFIG.productPath);
 
   console.log('Clicking Add to Cart...');
   const addBtn = await page.$(SELECTORS.addToCartBtn);
   if (!addBtn) throw new Error('Add to cart button not found');
   await addBtn.click();
-
   await page.waitForTimeout(1000);
 
   console.log('Proceeding to checkout...');
   let checkoutBtn = await page.$(SELECTORS.checkoutButton);
-  if (!checkoutBtn) await page.goto(CONFIG.baseUrl + '/cart', { waitUntil: 'networkidle' });
+  if (!checkoutBtn) await page.goto(CONFIG.baseUrl + '/cart', { waitUntil: 'domcontentloaded' });
   else await checkoutBtn.click();
 
   console.log('Filling guest shipping details...');
@@ -131,7 +135,7 @@ async function placeOneOrder(orderIndex, browser) {
   if (!payBtn) throw new Error('Pay button not found');
   await Promise.all([
     payBtn.click(),
-    page.waitForNavigation({ waitUntil: 'networkidle', timeout: 45000 }).catch(()=>{})
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(()=>{})
   ]);
 
   console.log('Fetching order confirmation...');
