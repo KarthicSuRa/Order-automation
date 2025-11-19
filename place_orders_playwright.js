@@ -15,7 +15,7 @@ const CONFIG = {
   baseUrl: 'https://sg-devap02.mcmworldwide.com',
   productPath: '/en_SG/bags/all-bags/stark-backpack-in-maxi-monogram-leather/MMKDAVE02VC001.html',
   ordersToPlace: Number(argv.count || 1),
-  headless: false,  // Run in visible mode
+  headless: true,  // Run in visible mode
   slowMo: 500,      // Slow down actions for visual check
   guest: {
     emailDomain: 'qa-example.com',
