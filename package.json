@@ -1,0 +1,11 @@
+{
+  "name": "sfcc-playwright-qa",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node place_orders_playwright.js --count=1"
+  },
+  "dependencies": {
+    "playwright": "^1.35.0",
+    "minimist": "^1.2.7"
+  }
+}
