@@ -1,30 +1,22 @@
 /**
- * place_orders_playwright.js
+ * place_orders_playwright_debug.js
  *
- * Guest checkout automation for SFCC storefront.
+ * Debug version for SFCC guest checkout.
+ * Visual, step-by-step verification of basket → checkout → payment → order.
+ *
  * Usage:
- *   node place_orders_playwright.js --count=1
- *   node place_orders_playwright.js --count=10
- *   node place_orders_playwright.js --count=100
- *
- * Prerequisites:
- *   npm install playwright minimist
- *   npx playwright install
+ *   node place_orders_playwright_debug.js --count=1
  */
 
 const { chromium } = require('playwright');
 const argv = require('minimist')(process.argv.slice(2));
 
-/* ========= CONFIG ========= */
 const CONFIG = {
   baseUrl: 'https://sg-devap02.mcmworldwide.com',
   productPath: '/en_SG/bags/all-bags/stark-backpack-in-maxi-monogram-leather/MMKDAVE02VC001.html',
   ordersToPlace: Number(argv.count || 1),
-  headless: true,
-  slowMo: 0,
-  delayMinMs: 800,
-  delayMaxMs: 2000,
-  maxRetriesPerOrder: 2,
+  headless: false,  // Run in visible mode
+  slowMo: 500,      // Slow down actions for visual check
   guest: {
     emailDomain: 'qa-example.com',
     firstName: 'Load',
@@ -44,7 +36,6 @@ const CONFIG = {
   }
 };
 
-/* ========= SELECTORS ========= */
 const SELECTORS = {
   addToCartBtn: '#add-to-cart',
   checkoutButton: 'a[href*="/checkout"], button[name="checkout"], button[data-checkout]',
@@ -71,49 +62,56 @@ const SELECTORS = {
   }
 };
 
-/* ========= UTILITIES ========= */
 function waitRandom(minMs, maxMs) {
   const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
   return new Promise(res => setTimeout(res, ms));
 }
 
 async function fillAdyenIframe(page, iframeSelector, card) {
+  console.log('Filling payment iframe...');
   const iframeElement = await page.waitForSelector(iframeSelector, { timeout: 10000 });
   const frame = await iframeElement.contentFrame();
   if (!frame) throw new Error('Cannot access payment iframe');
 
+  console.log('Entering card number...');
   if (await frame.$(SELECTORS.payment.cardNumber))
     await frame.fill(SELECTORS.payment.cardNumber, card.number);
+
+  console.log('Entering expiry...');
   if (await frame.$(SELECTORS.payment.expiry))
     await frame.fill(SELECTORS.payment.expiry, `${card.expiryMonth}${card.expiryYear.slice(-2)}`);
+
+  console.log('Entering CVV...');
   if (await frame.$(SELECTORS.payment.cvc))
     await frame.fill(SELECTORS.payment.cvc, card.cvv);
+
+  console.log('Entering card holder name...');
   if (await frame.$(SELECTORS.payment.holderName))
     await frame.fill(SELECTORS.payment.holderName, card.holderName);
 
   return true;
 }
 
-/* ========= PLACE ONE ORDER ========= */
 async function placeOneOrder(orderIndex, browser) {
   const page = await browser.newPage();
-  page.setDefaultTimeout(45000);
-  const productUrl = CONFIG.baseUrl + CONFIG.productPath;
-  console.log(`Order[${orderIndex}] → Visiting PDP: ${productUrl}`);
-  await page.goto(productUrl, { waitUntil: 'networkidle' });
+  page.setDefaultTimeout(60000);
 
-  // Add to cart
+  console.log(`Order[${orderIndex}] → Visiting product page...`);
+  await page.goto(CONFIG.baseUrl + CONFIG.productPath, { waitUntil: 'networkidle' });
+
+  console.log('Clicking Add to Cart...');
   const addBtn = await page.$(SELECTORS.addToCartBtn);
   if (!addBtn) throw new Error('Add to cart button not found');
   await addBtn.click();
+
   await page.waitForTimeout(1000);
 
-  // Checkout
+  console.log('Proceeding to checkout...');
   let checkoutBtn = await page.$(SELECTORS.checkoutButton);
   if (!checkoutBtn) await page.goto(CONFIG.baseUrl + '/cart', { waitUntil: 'networkidle' });
   else await checkoutBtn.click();
 
-  // Fill guest shipping
+  console.log('Filling guest shipping details...');
   const guestEmail = `guest+${Date.now()}+${orderIndex}@${CONFIG.guest.emailDomain}`;
   if (await page.$(SELECTORS.shipping.email)) await page.fill(SELECTORS.shipping.email, guestEmail);
   if (await page.$(SELECTORS.shipping.firstName)) await page.fill(SELECTORS.shipping.firstName, CONFIG.guest.firstName);
@@ -124,9 +122,11 @@ async function placeOneOrder(orderIndex, browser) {
   if (await page.$(SELECTORS.shipping.phone)) await page.fill(SELECTORS.shipping.phone, CONFIG.guest.phone);
   if (await page.$(SELECTORS.shipping.continueBtn)) await page.click(SELECTORS.shipping.continueBtn);
 
-  // Payment
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
+
   await fillAdyenIframe(page, SELECTORS.payment.iframeSelector, CONFIG.card);
+
+  console.log('Submitting payment...');
   const payBtn = await page.$(SELECTORS.payment.payButton);
   if (!payBtn) throw new Error('Pay button not found');
   await Promise.all([
@@ -134,41 +134,32 @@ async function placeOneOrder(orderIndex, browser) {
     page.waitForNavigation({ waitUntil: 'networkidle', timeout: 45000 }).catch(()=>{})
   ]);
 
-  // Order number
+  console.log('Fetching order confirmation...');
   let orderNumber = null;
   if (await page.$(SELECTORS.orderConfirmation.orderNumberSelector)) {
     orderNumber = await page.$eval(SELECTORS.orderConfirmation.orderNumberSelector, el => el.innerText.trim()).catch(()=>null);
   }
+
+  console.log(`Order[${orderIndex}] complete — Order Number: ${orderNumber || 'N/A'}`);
   await page.close();
   return { success: true, orderNumber };
 }
 
-/* ========= MAIN RUNNER ========= */
 (async () => {
-  const total = CONFIG.ordersToPlace;
-  console.log(`Starting guest checkout run — ${total} orders`);
   const browser = await chromium.launch({ headless: CONFIG.headless, slowMo: CONFIG.slowMo });
-
   const results = [];
-  for (let i = 1; i <= total; i++) {
-    let attempt = 0;
-    let ok = false;
-    let res = null;
-    while (attempt <= CONFIG.maxRetriesPerOrder && !ok) {
-      attempt++;
-      try {
-        console.log(`Placing order ${i} (attempt ${attempt})`);
-        res = await placeOneOrder(i, browser);
-        console.log(`Order ${i} placed — orderNumber: ${res.orderNumber || 'N/A'}`);
-        ok = true;
-      } catch (err) {
-        console.error(`Order ${i} attempt ${attempt} failed: ${err.message}`);
-        if (attempt > CONFIG.maxRetriesPerOrder) res = { success: false, error: err.message };
-        else await new Promise(r => setTimeout(r, 2000));
-      }
+
+  for (let i = 1; i <= CONFIG.ordersToPlace; i++) {
+    console.log(`--- Starting Order ${i} ---`);
+    try {
+      const res = await placeOneOrder(i, browser);
+      results.push({ order: i, ...res });
+    } catch (err) {
+      console.error(`Order ${i} failed: ${err.message}`);
+      results.push({ order: i, success: false, error: err.message });
     }
-    results.push({ order: i, ...res });
-    await new Promise(r => setTimeout(r, Math.floor(Math.random() * (CONFIG.delayMaxMs - CONFIG.delayMinMs + 1)) + CONFIG.delayMinMs));
+
+    await waitRandom(1000, 2000); // random delay
   }
 
   await browser.close();
