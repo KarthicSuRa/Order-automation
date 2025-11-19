@@ -1,0 +1,31 @@
+name: Playwright Bulk Order Test
+
+on:
+  workflow_dispatch:   # Manual trigger from GitHub UI
+  schedule:
+    - cron: '0 9 * * *'  # Optional: run daily at 9AM UTC
+
+jobs:
+  run-playwright:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: |
+          npm ci
+          npx playwright install
+
+      - name: Run Playwright Script (1 order)
+        run: node place_orders_playwright.js --count=1
+
+      # Optionally, run 10 or 100 orders in separate steps
+      # - name: Run 10 Orders
+      #   run: node place_orders_playwright.js --count=10
