@@ -6,8 +6,10 @@
  */
 
 const { chromium } = require('playwright');
-const { faker } = require('@faker-js/faker');
 const fs = require('fs');
+
+// Faker will be loaded dynamically to support ESM
+let faker;
 
 // CONFIG from environment variables
 const JOB_NUMBER = parseInt(process.env.JOB_NUMBER || '1');
