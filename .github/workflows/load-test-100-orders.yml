@@ -1,0 +1,67 @@
+name: Load Test - 100 Orders
+
+on:
+  workflow_dispatch:  # Manual trigger
+    inputs:
+      total_orders:
+        description: 'Total orders to place'
+        required: true
+        default: '100'
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 20 parallel jobs, each placing 5 orders = 100 total
+        job_number: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+      max-parallel: 20  # GitHub allows 20 concurrent jobs for public repos
+      fail-fast: false  # Continue even if some jobs fail
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+      
+      - name: Run load test (5 orders per job)
+        run: node place_orders_github_actions.js
+        env:
+          JOB_NUMBER: ${{ matrix.job_number }}
+          ORDERS_PER_JOB: 5
+          TOTAL_JOBS: 20
+      
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: load-test-results-job-${{ matrix.job_number }}
+          path: results-job-${{ matrix.job_number }}.json
+          retention-days: 7
+
+  aggregate-results:
+    needs: load-test
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Download all results
+        uses: actions/download-artifact@v3
+        with:
+          path: all-results
+      
+      - name: Aggregate results
+        run: |
+          echo "📊 Load Test Summary"
+          echo "==================="
+          find all-results -name "*.json" -exec cat {} \; | jq -s '.'

@@ -116,14 +116,19 @@ async function placeOneOrder(orderIndex, browser) {
   await page.getByRole('link', { name: 'Proceed to Checkout' }).click();
 
   console.log('Filling guest shipping details...');
+  const randomSuffix = Math.floor(Math.random() * 10000);
   const guestEmail = `guest${Date.now()}${orderIndex}@${CONFIG.guest.emailDomain}`;
+  const firstName = `${CONFIG.guest.firstName}${randomSuffix}`;
+  const lastName = `${CONFIG.guest.lastName}${orderIndex}`;
+  const address1 = `${Math.floor(Math.random() * 100)} Test Street`;
+  const phone = `650555${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`;
 
   await page.getByRole('textbox', { name: 'Email Address' }).fill(guestEmail);
-  await page.getByRole('textbox', { name: 'First Name' }).fill(CONFIG.guest.firstName);
-  await page.getByRole('textbox', { name: 'Last Name' }).fill(CONFIG.guest.lastName);
-  await page.getByRole('textbox', { name: 'Address Line 1' }).fill(CONFIG.guest.address1);
+  await page.getByRole('textbox', { name: 'First Name' }).fill(firstName);
+  await page.getByRole('textbox', { name: 'Last Name' }).fill(lastName);
+  await page.getByRole('textbox', { name: 'Address Line 1' }).fill(address1);
   await page.getByRole('textbox', { name: 'Postcode' }).fill(CONFIG.guest.postalCode);
-  await page.getByRole('textbox', { name: 'Phone Number' }).fill(CONFIG.guest.phone);
+  await page.getByRole('textbox', { name: 'Phone Number' }).fill(phone);
 
   // Optional: Select shipping method if needed (from recording)
   // await page.getByText('Home delivery in 3 days').click();
