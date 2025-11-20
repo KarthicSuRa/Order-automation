@@ -14,10 +14,10 @@ const CONFIG = {
   baseUrl: 'https://sg-devap02.mcmworldwide.com',
   productPath: '/en_SG/bags/all-bags/stark-backpack-in-maxi-monogram-leather/MMKDAVE02VC001.html',
   ordersToPlace: Number(argv.count || 1),
-  headless: true,          // Must be true for CI
+  headless: false,          // Must be true for CI
   slowMo: 100,             // Optional slow motion for debugging logs
   guest: {
-    emailDomain: 'qa-example.com',
+    emailDomain: 'example.com',
     firstName: 'Load',
     lastName: 'Test',
     phone: '6505550100',
@@ -27,7 +27,7 @@ const CONFIG = {
     country: 'SG'
   },
   card: {
-    number: '5454545454545454',
+    number: '5555 3412 4444 1115',
     expiryMonth: '03',
     expiryYear: '2030',
     cvv: '737',
@@ -37,6 +37,8 @@ const CONFIG = {
 
 const SELECTORS = {
   addToCartBtn: '#add-to-cart',
+  buyNowBtn: '#buy-now-button',
+  modalCheckoutBtn: 'a.button.mod_button.primary-button.no-outline[href*="/shipping"]',
   checkoutButton: 'a[href*="/checkout"], button[name="checkout"], button[data-checkout]',
   shipping: {
     email: 'input[name="dwfrm_singleshipping_shippingAddress_email"]',
@@ -67,7 +69,7 @@ function waitRandom(minMs, maxMs) {
 }
 
 async function fillAdyenIframe(page, iframeSelector, card) {
-  const iframeElement = await page.waitForSelector(iframeSelector, { timeout: 10000 });
+  const iframeElement = await page.waitForSelector(iframeSelector, { timeout: 30000 });
   const frame = await iframeElement.contentFrame();
   if (!frame) throw new Error('Cannot access payment iframe');
 
@@ -87,7 +89,7 @@ async function navigateWithRetry(page, url, maxRetries = 2) {
   let attempt = 0;
   while (attempt < maxRetries) {
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
+      await page.goto(url, { waitUntil: 'load', timeout: 120000 });
       return;
     } catch (err) {
       attempt++;
@@ -103,50 +105,73 @@ async function placeOneOrder(orderIndex, browser) {
 
   console.log(`Order[${orderIndex}] → Visiting product page...`);
   await navigateWithRetry(page, CONFIG.baseUrl + CONFIG.productPath);
+  console.log(`Current URL: ${page.url()}`);
+  console.log(`Page Title: ${await page.title()}`);
 
-  console.log('Clicking Add to Cart...');
-  const addBtn = await page.$(SELECTORS.addToCartBtn);
-  if (!addBtn) throw new Error('Add to cart button not found');
-  await addBtn.click();
-  await page.waitForTimeout(1000);
+  // Logic from manual recording
+  console.log('Clicking Buy Now...');
+  await page.getByRole('button', { name: 'Buy Now' }).click();
 
-  console.log('Proceeding to checkout...');
-  let checkoutBtn = await page.$(SELECTORS.checkoutButton);
-  if (!checkoutBtn) await page.goto(CONFIG.baseUrl + '/cart', { waitUntil: 'domcontentloaded' });
-  else await checkoutBtn.click();
+  console.log('Proceeding to checkout from modal...');
+  await page.getByRole('link', { name: 'Proceed to Checkout' }).click();
 
   console.log('Filling guest shipping details...');
-  const guestEmail = `guest+${Date.now()}+${orderIndex}@${CONFIG.guest.emailDomain}`;
-  if (await page.$(SELECTORS.shipping.email)) await page.fill(SELECTORS.shipping.email, guestEmail);
-  if (await page.$(SELECTORS.shipping.firstName)) await page.fill(SELECTORS.shipping.firstName, CONFIG.guest.firstName);
-  if (await page.$(SELECTORS.shipping.lastName)) await page.fill(SELECTORS.shipping.lastName, CONFIG.guest.lastName);
-  if (await page.$(SELECTORS.shipping.address1)) await page.fill(SELECTORS.shipping.address1, CONFIG.guest.address1);
-  if (await page.$(SELECTORS.shipping.city)) await page.fill(SELECTORS.shipping.city, CONFIG.guest.city);
-  if (await page.$(SELECTORS.shipping.postal)) await page.fill(SELECTORS.shipping.postal, CONFIG.guest.postalCode);
-  if (await page.$(SELECTORS.shipping.phone)) await page.fill(SELECTORS.shipping.phone, CONFIG.guest.phone);
-  if (await page.$(SELECTORS.shipping.continueBtn)) await page.click(SELECTORS.shipping.continueBtn);
+  const guestEmail = `guest${Date.now()}${orderIndex}@${CONFIG.guest.emailDomain}`;
+
+  await page.getByRole('textbox', { name: 'Email Address' }).fill(guestEmail);
+  await page.getByRole('textbox', { name: 'First Name' }).fill(CONFIG.guest.firstName);
+  await page.getByRole('textbox', { name: 'Last Name' }).fill(CONFIG.guest.lastName);
+  await page.getByRole('textbox', { name: 'Address Line 1' }).fill(CONFIG.guest.address1);
+  await page.getByRole('textbox', { name: 'Postcode' }).fill(CONFIG.guest.postalCode);
+  await page.getByRole('textbox', { name: 'Phone Number' }).fill(CONFIG.guest.phone);
+
+  // Optional: Select shipping method if needed (from recording)
+  // await page.getByText('Home delivery in 3 days').click();
+
+  console.log('Submitting shipping...');
+  await page.getByRole('button', { name: 'Continue to Billing' }).click();
 
   await page.waitForTimeout(2000);
 
-  await fillAdyenIframe(page, SELECTORS.payment.iframeSelector, CONFIG.card);
+  console.log('Filling payment details...');
+  // Name on Card
+  await page.getByRole('textbox', { name: 'Name on Card' }).fill(CONFIG.card.holderName);
 
-  console.log('Submitting payment...');
-  const payBtn = await page.$(SELECTORS.payment.payButton);
-  if (!payBtn) throw new Error('Pay button not found');
-  await Promise.all([
-    payBtn.click(),
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(()=>{})
-  ]);
+  // Card Number
+  const cardFrame = page.locator('label').filter({ hasText: 'Card Number' }).locator('iframe').contentFrame();
+  await cardFrame.getByRole('textbox', { name: 'Card number' }).click();
+  await cardFrame.getByRole('textbox', { name: 'Card number' }).pressSequentially(CONFIG.card.number, { delay: 100 });
 
-  console.log('Fetching order confirmation...');
-  let orderNumber = null;
-  if (await page.$(SELECTORS.orderConfirmation.orderNumberSelector)) {
-    orderNumber = await page.$eval(SELECTORS.orderConfirmation.orderNumberSelector, el => el.innerText.trim()).catch(()=>null);
-  }
+  // Expiry
+  const expiryFrame = page.locator('label').filter({ hasText: 'Expiration MM/YY' }).locator('iframe').contentFrame();
+  await expiryFrame.getByRole('textbox', { name: 'Credit or debit card' }).click();
+  await expiryFrame.getByRole('textbox', { name: 'Credit or debit card' }).pressSequentially(`${CONFIG.card.expiryMonth}/${CONFIG.card.expiryYear.slice(-2)}`, { delay: 100 });
 
-  console.log(`Order[${orderIndex}] complete — Order Number: ${orderNumber || 'N/A'}`);
+  // CVC
+  const cvcFrame = page.locator('label').filter({ hasText: 'Security Code' }).locator('iframe').contentFrame();
+  await cvcFrame.getByRole('textbox', { name: 'Credit or debit card 3 or 4' }).click();
+  await cvcFrame.getByRole('textbox', { name: 'Credit or debit card 3 or 4' }).pressSequentially(CONFIG.card.cvv, { delay: 100 });
+
+  console.log('Reviewing order...');
+  await page.getByRole('button', { name: 'Review Order' }).click();
+
+  // Wait for the "Complete Purchase" button to become visible/enabled
+  console.log('Waiting for Complete Purchase button...');
+  await page.getByRole('button', { name: 'COMPLETE PURCHASE' }).waitFor({ state: 'visible', timeout: 60000 });
+
+  console.log('Completing purchase...');
+  await page.getByRole('button', { name: 'COMPLETE PURCHASE' }).click();
+
+  console.log('Waiting for order confirmation...');
+  await page.waitForURL(/orderconfirmation/, { timeout: 60000 });
+
+  // Extract order number from heading or page content
+  const confirmationHeading = await page.getByRole('heading', { name: 'Thanks for your order' }).first();
+  const headingText = await confirmationHeading.innerText().catch(() => 'Order Placed');
+
+  console.log(`Order[${orderIndex}] complete — ${headingText}`);
   await page.close();
-  return { success: true, orderNumber };
+  return { success: true, orderNumber: headingText };
 }
 
 (async () => {
